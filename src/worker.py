@@ -11,32 +11,8 @@ async def on_fetch(request, env):
 
 app = FastAPI()
 
-
-cardnames = [
-  "Agatha's Soul Cauldron",
-  "Ancient Stirrings",
-  "Basking Broodscale",
-  "Blade of the Bloodchief",
-  "Boseiju, Who Endures",
-  "Darksteel Citadel",
-  "Eldrazi Temple",
-  "Forest",
-  "Gemstone Caverns",
-  "Glaring Fleshraker",
-  "Grove of the Burnwillows",
-  "Haywire Mite",
-  "Kozilek's Command",
-  "Malevolent Rumble",
-  "Mishra's Bauble",
-  "Mox Opal",
-  "Shadowspear",
-  "Springleaf Drum",
-  "Urza's Saga",
-  "Walking Ballista"
-]
-
-@app.get("/")
-async def get_scores(format: str):
+@app.post("/")
+async def get_scores(request: list[str], format: str):
   bigrams: dict[str, int] = None
   match format:
     case "standard":
@@ -54,4 +30,5 @@ async def get_scores(format: str):
     case _:
       return JSONResponse(content={"error": "Invalid format"}, status_code=400)
 
-  return JSONResponse(content=find_nearest_archetypes(bigrams, cardnames))
+  scores = find_nearest_archetypes(bigrams, request)
+  return JSONResponse(content={ k: round(v, 4) for k, v in scores.items() })
