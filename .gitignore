@@ -1,0 +1,15 @@
+.*
+!.env-example
+!.github/
+!.gitignore
+
+# Ignore python cache files
+__pycache__/
+
+# Ignore build artifacts
+**/artifacts/*
+!**/artifacts/__init__.py
+
+# Ignore npm/node modules
+node_modules/
+**/*.json

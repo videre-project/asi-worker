@@ -1,0 +1,14 @@
+[project]
+name = "asi"
+version = "0.1.0"
+description = "A simple Python package for computing ASI scores for decklists."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+  "psycopg2-binary",
+  "python-dotenv", # optional
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
