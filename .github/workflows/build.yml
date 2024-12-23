@@ -1,20 +1,39 @@
-# name: Build
-# on:
-#   schedule:
-#     - cron: "0 0 * * *"
-# jobs:
-#   build:
-#     # ...
-#     - name: Build & Deploy Worker
-#       uses: cloudflare/wrangler-action@v3
-#       with:
-#         wranglerVersion: "latest"  <-- HERE
-#         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-#         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-#   keepalive:
-#     if: github.event_name == 'schedule'
-#     runs-on: ubuntu-latest
-#     permissions:
-#       actions: write
-#     steps:
-#       - uses: liskin/gh-workflow-keepalive@v1
+name: Build
+on:
+  workflow_dispatch:
+  schedule:
+    # Run 4 times a day, starting at midnight
+    - cron: "0 0,6,12,18 * * *"
+concurrency:
+  group: ci-${{ github.workflow }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Check out the repository
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      # Install project dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+      - name: Set up Python
+        run: uv python install
+      # Run the build script
+      - name: Create .env file
+        run: |
+          echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
+          echo "CLOUDFLARE_API_KEY=${{ secrets.CLOUDFLARE_API_KEY }}" >> .env
+          echo "CLOUDFLARE_DATABASE_ID=${{ secrets.CLOUDFLARE_DATABASE_ID }}" >> .env
+          echo "CLOUDFLARE_ACCOUNT_ID=${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" >> .env
+      - name: Build
+        run: uv run build.py
+  keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      # Ensure that the cron job keeps running (even if the repo is inactive).
+      - uses: liskin/gh-workflow-keepalive@v1

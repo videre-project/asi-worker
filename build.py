@@ -13,6 +13,12 @@ import sys; sys.path.append('src')
 from asi import fetch_archetypes, compute_archetype_bigrams
 from asi.postgres import start_pool
 
+# Ensure that the required environment variables are set.
+assert "DATABASE_URL" in env, "DATABASE_URL is not set."
+assert "CLOUDFLARE_API_KEY" in env, "CLOUDFLARE_API_KEY is not set."
+assert "CLOUDFLARE_DATABASE_ID" in env, "CLOUDFLARE_DATABASE_ID is not set."
+assert "CLOUDFLARE_ACCOUNT_ID" in env, "CLOUDFLARE_ACCOUNT_ID is not set."
+
 FORMATS = [
   'standard',
   'modern',
