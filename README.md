@@ -56,7 +56,7 @@ The request body must be a valid JSON array containing a list of card names. The
 For example:
 
 ```json
-// The card names must be provided as strings and are case-sensitive.
+// The card names must be provided as strings (but are not case-sensitive).
 [
   "Agatha's Soul Cauldron",
   "Ancient Stirrings",

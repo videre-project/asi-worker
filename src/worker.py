@@ -48,14 +48,14 @@ async def index(request, params, env):
     d1_result = await env.D1.prepare("""
       WITH card_list AS (SELECT value FROM json_each(?)),
       filtered AS (
-        SELECT card, entry FROM modern
-        WHERE card IN (SELECT value FROM card_list)
+      SELECT card, entry FROM modern
+      WHERE lower(card) IN (SELECT value FROM card_list)
       )
       SELECT json_array(card, key) as key, value as value
       FROM filtered
       CROSS JOIN json_each(filtered.entry)
-      WHERE key IN (SELECT value FROM card_list);
-    """).bind(json_dumps(cards)).all()
+      WHERE lower(key) IN (SELECT value FROM card_list);
+    """).bind(json_dumps([card.lower() for card in cards])).all()
 
     if not d1_result.success:
       raise Exception(d1_result.error)
