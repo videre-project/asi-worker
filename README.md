@@ -1,123 +1,220 @@
-# Archetype Similarity Index (ASI)
+# asi-worker
 
-## Introduction
+Cloudflare worker for computing archetype similarity index (ASI) scores.
 
-The Archetype Similarity Index (ASI) is a metric used to compare archetypes to a given decklist based on the unique number of card-pairings (bigrams) they share. This document explains how ASI is calculated and its components.
+<a href="#overview">Overview</a> |
+<a href="#project-structure">Project Structure</a> |
+<a href="#asi-endpoint">`/asi` Endpoint</a> |
+<a href="#setup-and-deployment">Setup and Deployment</a> |
+<a href="#license">License</a>
 
-## Formula
+## Overview
 
-The final similarity score for an archetype $A$ can be expressed as:
+The [Archetype Similarity Index (ASI)](/SPECIFICATION.md) is designed to calculate the nearest archetypes to a given decklist based on the unique number of card-pairings (bigrams) they share. This project uses Cloudflare Workers to handle requests and compute the ASI.
 
-$$ S(A) = \frac{W_{\text{global}}(A) + W_{\text{local}}(A)}{\max\limits_{\substack{b=(c_1,c_2) \in B \\ c_1,c_2 \in D}} P(b)} $$
+## Project Structure
 
-## Definitions
+<!-- Create a file tree with comments -->
+```sh
+.
+├── src/
+│   ├── asi/ # ASI library for computing bigrams and ASI scores.
+│   │   ├── __init__.py
+│   │   ├── archetypes.py
+│   │   ├── bigrams.py
+│   │   └── postgres.py
+│   ├── router.py # A zero-dependency request router.
+│   └── worker.py # The main Cloudflare worker script.
+├── .env-example
+├── build.py # Build script for updating Cloudflare D1 bigrams.
+├── pyproject.toml
+└── wrangler.toml # Configuration file for Cloudflare Workers.
+```
 
-- **Bigrams ($B$)**: The set of all bigrams among the total pool of archetypes.
-- **Decklist ($D$)**: The set of all cards in the decklist.
-- **Joint Probability ($P(b | A)$)**: The joint hypergeometric probability of each card in bigram $b$ appearing in archetype $A$.
-- **Maximum Joint Probability**: $\max\limits_{\substack{b=(c_1,c_2) \in B \\ c_1,c_2 \in D}} P(b)$ is the maximum joint hypergeometric probability for any bigrams in $D$.
+## `/asi` Endpoint
 
-## Weight Calculation
+### Request
 
-The summation is computed in two passes for $W_{\text{global}}$ and $W_{\text{local}}$:
+To calculate the nearest archetypes to a given decklist, send a POST request to the `/asi` endpoint with a JSON body containing an array of card names.
 
-- **Global Weight ($W_{\text{global}}$)**: The global weight of all bigrams in the archetype.
-- **Local Weight ($W_{\text{local}}$)**: The local weight of bigrams that are unique to the archetype (among a pool of other archetypes with a high global weight).
+#### URL
 
-We define the global and local weights as:
+```
+POST https://ml.videreproject.com/asi?format=modern # or another format
+```
 
-$$W_{\text{global}}(A) = \sum_{\substack{b=(c_1,c_2) \in B \\\\ c_1,c_2 \in D}} w_1(b,A) \cdot P(b | A)$$
+#### Headers
 
-$$W_{\text{local}}(A) = \sum_{\substack{b=(c_1,c_2) \in B \\\\ c_1,c_2 \in D}} w_2(b,A) \cdot P(b | A)$$
+```http
+Content-Type: application/json
+```
 
-Where:
+#### Body
 
-- $w_1(b,A)$ is the global weight of bigram $b$ in archetype $A$.
-- $w_2(b,A)$ is the local weight of bigram $b$ in archetype $A$.
+The request body must be a valid JSON array containing a list of card names. The list must contain at least two cards to form bigrams.
 
-We can define the weights $w_1$ and $w_2$ as:
+For example:
 
-$$
-w_1(b,A) =
-\begin{cases}
-2 & \text{if } A \in F \text{ and } \left| F \right| = 1 \\
-1 & \text{otherwise}
-\end{cases}
-$$
+```json
+// The card names must be provided as strings and are case-sensitive.
+[
+  "Agatha's Soul Cauldron",
+  "Ancient Stirrings",
+  "Basking Broodscale",
+  "Blade of the Bloodchief",
+  "Boseiju, Who Endures",
+  "Darksteel Citadel",
+  "Eldrazi Temple",
+  "Forest",
+  "Gemstone Caverns",
+  "Glaring Fleshraker",
+  "Grove of the Burnwillows",
+  "Haywire Mite",
+  "Kozilek's Command",
+  "Malevolent Rumble",
+  "Mishra's Bauble",
+  "Mox Opal",
+  "Shadowspear",
+  "Springleaf Drum",
+  "Urza's Saga",
+  "Walking Ballista"
+]
+```
 
-$$
-w_2(b,A) =
-\begin{cases}
-2 & \text{if } A \in C \cap F \text{ and } \left| F \right| = 1 \\
-1 & \text{if } A \in C \cap F \text{ and } \left| F \right| < \frac{|C|}{3} \\
--1 & \text{if } A \notin C \text { and } A \in F \\
-0 & \text{otherwise}
-\end{cases}
-$$
+### Response
 
-Where for all archetypes $A$:
+The response will be a JSON object containing the nearest archetypes and their
+similarity scores. These scores vary between 0 and 1, with scores below 0.5
+being undecisive; only scores greater than 0.05 are included in the response.
 
-- $C$ is the set of all candidate archetypes $A'$ such that $W_{\text{global}}(A') \geq M - 2$, where $M$ is the maximum score of $W_{\text{global}}$ among all archetypes.
-- $|F|$ = $\left| \left\{ A' \in C \mid b \in A' \right\} \right|$, i.e. the
-number of archetypes in $C$ that contain the bigram $b$.
+#### Success Response
 
-## Normalized Joint Probability
+```json
+{
+  "meta": {
+    // Indicates which database type was used. Currently, only D1 is supported.
+    "database": "D1",
+    // The Cloudflare worker backend used to process the request.
+    "backend": "v3-prod",
+    // The total SQL execution time in milliseconds.
+    "exec-ms": 5.758,
+    // The number of rows read/scanned by the query.
+    "read_count": 2742,
+  },
+  // The ASI scores for each archetype.
+  "data": {
+    "Basking Broodscale Combo": 1,
+    "Eldrazi": 0.6481133,
+    "Hardened Scales": 0.32852826,
+    "Breach": 0.25529937,
+    "Affinity": 0.20222514,
+    "The Rock": 0.14852764,
+    "Grinding Station": 0.13885093,
+    "Through the Breach": 0.12699843,
+    "Eldrazi Ramp": 0.11773569,
+    "Lantern": 0.08489789,
+    "Gruul Aggro": 0.0651898,
+    "Eldrazi Tron": 0.06422159,
+    "Yawgmoth": 0.06139001,
+    "Tron": 0.0536501
+  }
+}
+```
 
-The joint probability of a bigram (pair of cards) appearing in an opening hand is calculated using the hypergeometric distribution. This probability is then normalized by the maximum possible joint probability to ensure comparability across different bigrams and archetypes.
+### Error Response
 
-### Hypergeometric Probability
+#### Missing `format` parameter
 
-We define a variant of the hypergeometric probability function $\text{hypergeo}(k, N, n, m)$ as:
+When the `format` URL parameter is missing, the response will be:
 
-$$
-\text{hypergeo}(k, N, n, m) = \sum_{i=n}^{\min(m, k)} \frac{\binom{m}{i} \binom{N-m}{k-i}}{\binom{N}{k}}
-$$
+```json
+{
+  "error": "Missing Parameter",
+  "message": "The 'format' parameter is required."
+}
+```
 
-where:
+If the `format` parameter provided is invalid, the response will be:
 
-- $k$ is the number of successes in the hypergeometric distribution.
-- $N$ is the total number of cards in the decklist.
-- $n$ is the $\textit{minimum}$ number of successes in the draws.
-- $m$ is the number of successes in the decklist.
+```json
+{
+  "error": "Invalid Parameter",
+  "message": "The 'format' parameter '...' is not supported."
+}
+```
 
-For the sake of simplicity, we'll assume $N = 60$ and $n \geq 1$, though this
-method generalizes for any arbitrary values of $N$ and $n$.
+#### Invalid JSON
 
-### Joint Probability
+In cases where the request body is not a valid JSON array (e.g., the body is malformed or an object is provided instead), the response will be:
 
-For a given archetype $A$, the probability of drawing both cards $c_1$, $c_2$ in a bigram $b$
-is calculated as:
+```json
+{
+  "error": "Invalid JSON",
+  "message": "The request body must be a valid JSON array."
+}
+```
 
-$$
-P(b | A) = P(c_1 \cap c_2 | A) = P(c_1 | A) + P(c_2 | A) - P(c_1 \cup c_2 | A)
-$$
+#### Insufficient Cards
 
-where for archetype $A$:
+If the request body contains fewer than two cards, the response will be:
 
-- $P(c1 | A)$ is the probability of drawing at least one copy of card $c_1$.
-- $P(c2 | A)$ is the probability of drawing at least one copy of card $c_2$.
-- $P(c1 \cup c2 | A)$ is the probability of drawing at least one copy of either card $c_1$ or $c_2$.
+```json
+{
+  "error": "Invalid JSON",
+  "message": "The request body must contain at least two cards."
+}
+```
 
-Thus, we can define the probabilities $P(c_1 | A)$, $P(c_2 | A)$, and $P(c_1 \cup c_2 | A)$ as:
+## Setup and Deployment
 
-- $P(c_1 | A) = \text{hypergeo}(k_1, 60, n \geq 1, 7)$
-- $P(c_2 | A) = \text{hypergeo}(k_2, 60, n \geq 1, 7)$
-- $P(c_1 \cup c_2 | A) = \text{hypergeo}(k_1 + k_2, 60, n \geq 1, 7)$
+### Install Tools
 
-where $k_1$ and $k_2$ are the counts of cards $c_1$ and $c_2$ in $A$, respectively.
+1. **Install Wrangler**: Install the Wrangler CLI tool.
 
-### Normalization
+```bash
+npm install -g @cloudflare/wrangler@^3.68.0
+```
 
-The joint probability is normalized by the maximum possible joint probability:
+2. **Install UV CLI**: Install the UV CLI tool to manage dependencies.
 
-$$
-P_{\text{norm}} = \frac{P(x, y)}{P_{\text{MAX}}}
-$$
+```bash
+npm install -g @cloudflare/uv@latest
+```
 
-where:
+### Configure and Set Up
 
-$$
-P_{\text{MAX}} = 1 - \left(1 - \text{hypergeo}(k_{\text{max}}, 60, n \geq 1, 7)\right)^2
-$$
+1. **Configure Wrangler**: Update the [wrangler.toml](/wrangler.toml) file with your Cloudflare account details.
 
-Here, $k_{\text{max}} = \max\left(4, \frac{k_1 + k_2}{2}\right)$ is the maximum number of successes in the hypergeometric distribution. The maximum of 4 and the average of the counts of cards $c_1$ and $c_2$ is used to ensure that the maximum joint probability is not too small for large values of $k_1$ and $k_2$.
+2. **Set Up Environment Variables**: Create a `.env` file in the root directory based on the provided `.env-example` file and fill in your Cloudflare credentials.
+
+### Install Dependencies
+
+Use the [UV CLI](https://docs.astral.sh/uv/getting-started/installation/) to install the required dependencies.
+
+```bash
+uv install
+```
+
+### Build and Deploy
+
+1. **Build Bigrams**: Run the build script to update Cloudflare D1 with the latest bigrams for each format.
+
+```bash
+uv run build.py
+```
+
+2. **Local Development**: Test the worker locally using Wrangler.
+
+```bash
+npx wrangler dev
+```
+
+3. **Deploy**: Deploy the worker using Wrangler.
+
+```bash
+npx wrangler deploy
+```
+
+## License
+
+This project is licensed under the Apache-2.0 License. See the [LICENSE](/LICENSE) file for more details.

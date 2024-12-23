@@ -12,7 +12,7 @@ from router import Router, JSONResponse, get_endpoint, get_parameters
 
 api = Router()
 
-@api.post('/')
+@api.post('/asi')
 async def index(request, params, env):
   try:
     cards: list[str] = (await request.json()).to_py()
