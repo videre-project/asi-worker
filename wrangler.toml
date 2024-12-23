@@ -5,3 +5,8 @@ compatibility_date = "2024-03-20"
 routes = [
   { pattern = "ml.videreproject.com", custom_domain = true }
 ]
+
+[[d1_databases]]
+binding = "D1"
+database_name = "asi-bigrams"
+database_id = "e123cc3c-2f0a-4ad1-b2a9-aa0c67d09fe8"

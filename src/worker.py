@@ -4,11 +4,9 @@
 ##
 """Cloudflare worker script for calculating the nearest archetypes with ASI."""
 
-from pyodide.ffi import JsArray
+from json import dumps as json_dumps, loads as json_loads
 
 from asi import find_nearest_archetypes
-from artifacts import *
-
 from router import Router, JSONResponse, get_endpoint, get_parameters
 
 
@@ -17,57 +15,72 @@ api = Router()
 @api.post('/')
 async def index(request, params, env):
   try:
-    cards = await request.json()
-    # The returned card object will be a `JsProxy` object, which we'll need to
-    # probe to check the kind of JSON object returned to us.
-    assert type(cards).__name__ == "JsProxy"
-    assert cards.typeof == "object"
+    cards: list[str] = (await request.json()).to_py()
+    assert isinstance(cards, list), "Received a non-array JSON object."
   except:
     return JSONResponse({
       "error": "Invalid JSON",
-      "message": "The request body must be a valid JSON object."
+      "message": "The request body must be a valid JSON array."
     }, status=400)
   else:
-    if not isinstance(cards, JsArray):
-      return JSONResponse({
-        "error": "Invalid JSON",
-        "message": "The request body must be a valid JSON array. " +
-                  f"to_py: {cards.to_py}" +
-                  f"Got type '{str(dir(cards))}'."
-      }, status=400)
-    elif cards.length < 2:
+    if len(cards) < 2:
       return JSONResponse({
         "error": "Invalid JSON",
         "message": "The request body must contain at least two cards."
       }, status=400)
 
-  bigrams: dict[str, int] = None
-  match (format := params.get("format", None)):
-    case "standard":
-      bigrams = standard_bigrams
-    case "modern":
-      bigrams = modern_bigrams
-    case "pioneer":
-      bigrams = pioneer_bigrams
-    case "vintage":
-      bigrams = vintage_bigrams
-    case "legacy":
-      bigrams = legacy_bigrams
-    case "pauper":
-      bigrams = pauper_bigrams
-    case _:
-      if format is None or len(format) == 0:
-        return JSONResponse({
-          "error": "Missing parameter",
-          "message": "The 'format' parameter is required."
-        }, status=400)
+  format: str = params.get("format", None)
+  if format is None or len(format) == 0:
+    return JSONResponse({
+      "error": "Missing parameter",
+      "message": "The 'format' parameter is required."
+    }, status=400)
+  elif (format := format.lower()) not in [
+    'standard', 'modern', 'pioneer', 'vintage', 'legacy', 'pauper',
+  ]:
+    return JSONResponse({
+      "error": "Invalid format",
+      "message": f"The 'format' parameter '{format}' is not supported."
+    }, status=400)
 
-      return JSONResponse({
-        "error": "Invalid format",
-        "message": f"The 'format' parameter '{format}' is not supported."
-      }, status=400)
+  bigrams: dict[tuple[str, str], any] = {}
+  try:
+    d1_result = await env.D1.prepare("""
+      WITH card_list AS (SELECT value FROM json_each(?)),
+      filtered AS (
+        SELECT card, entry FROM modern
+        WHERE card IN (SELECT value FROM card_list)
+      )
+      SELECT json_array(card, key) as key, value as value
+      FROM filtered
+      CROSS JOIN json_each(filtered.entry)
+      WHERE key IN (SELECT value FROM card_list);
+    """).bind(json_dumps(cards)).all()
 
-  return JSONResponse(find_nearest_archetypes(bigrams, cards))
+    if not d1_result.success:
+      raise Exception(d1_result.error)
+
+    d1_meta = d1_result.meta.to_py()
+    for row in d1_result.results.to_py():
+      k, v = list(map(json_loads, row.values()))
+      bigrams[tuple(k)] = v
+  except Exception as e:
+    return JSONResponse({
+      "error": "Query error",
+      "message": str(e)
+    }, status=500)
+
+  matches = find_nearest_archetypes(bigrams, cards)
+  return JSONResponse({
+    "meta": {
+      "database": "D1",
+      "backend": d1_meta["served_by"],
+      "exec_ms": d1_meta["duration"],
+      "read_count": d1_meta["rows_read"],
+    },
+    "data": { archetype: round(score, 8) for archetype, score in matches.items()
+                                         if score > 0.05 }
+  })
 
 async def on_fetch(request, env):
   method: str = request.method

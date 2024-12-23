@@ -2,10 +2,16 @@
 # Copyright (c) 2024, Cory Bennett. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 ##
+from cloudflare import Cloudflare
 from datetime import datetime, timedelta
+import json
+from os import environ as env
 
+# Since we aren't bundling this script, we can dynamically import src/ modules.
 import sys; sys.path.append('src')
+
 from asi import fetch_archetypes, compute_archetype_bigrams
+from asi.postgres import start_pool
 
 FORMATS = [
   'standard',
@@ -15,14 +21,59 @@ FORMATS = [
   'legacy',
   'pauper',
 ]
+
 MIN_DATE = (TIMESTAMP := datetime.now()) - timedelta(days=90)
 
+# Start a PostgreSQL connection pool for the MTGO database.
+start_pool()
+
+# Setup a connection to the Cloudflare D1 API.
+client = Cloudflare(api_key=env["CLOUDFLARE_API_KEY"])
+db = lambda query, **kwargs: client.d1.database.raw(
+  database_id=env["CLOUDFLARE_DATABASE_ID"],
+  account_id=env["CLOUDFLARE_ACCOUNT_ID"],
+  sql=query,
+  **kwargs
+)
+
 for format in FORMATS:
-  bigram = compute_archetype_bigrams(fetch_archetypes(format, MIN_DATE))
-  with open(f'src/artifacts/{format}.py', 'w') as f:
-    f.write(f"""#
-# This is an auto-generated file. Do not modify.
-# Generated on {TIMESTAMP:%Y-%m-%d %H:%M:%S}.
-#
-bigrams = {str({ k1: { k2: round(v2, 8) } for k1, v1 in bigram.items()
-                                          for k2, v2 in v1.items() })}""")
+  # Create the table if it does not exist.
+  # This doesn't consume any read/write operations if the table already exists.
+  db(f"""
+    CREATE TABLE IF NOT EXISTS {format} (
+      card TEXT PRIMARY KEY,
+      entry JSONB,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  """)
+
+  # Flatten bigrams into a single dictionary entry per card for better database
+  # I/O efficiency. This reduces the n(n-1)/2 space complexity to just n.
+  flattened_bigram: dict = {}
+  bigrams = compute_archetype_bigrams(fetch_archetypes(format, MIN_DATE))
+  for (card1, card2), value in bigrams.items():
+    if card1 not in flattened_bigram:
+      flattened_bigram[card1] = {}
+    flattened_bigram[card1][card2] = { k: round(v, 8) for k,v in value.items() }
+
+  # Batch insert/update bigram entries in the database.
+  # Allows for inserting 6,000 rows/minute (w/ 1200 requests every 5 minutes).
+  batch_size = 50
+  keys = list(flattened_bigram.keys())
+  for i in range(0, len(keys), batch_size):
+    batch_keys = keys[i:i + batch_size]
+    batch: dict[str, dict] = { k: flattened_bigram[k] for k in batch_keys }
+    res = db(f"""
+      INSERT OR REPLACE INTO {format} (card, entry, updated_at)
+      SELECT value ->> 0 as card, value ->> 1 as entry, CURRENT_TIMESTAMP
+      FROM json_each(?)
+      """,
+      params=[json.dumps([[k, json.dumps(v)] for k, v in batch.items()])]
+    )
+
+  # Create an index on the updated_at column.
+  db(f"CREATE INDEX IF NOT EXISTS {format}_updated_at ON {format} (updated_at)")
+  
+  # Delete old entries from the database.
+  # We'll assume all transactions have been completed within 5-10 minutes.
+  db(f"DELETE FROM {format} WHERE updated_at < datetime('now', '-30 minutes')")

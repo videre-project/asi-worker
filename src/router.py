@@ -5,7 +5,7 @@
 """Cloudflare workers API router and FFI utilities."""
 
 from js import Response, Headers
-import json
+from json import dumps as json_dumps
 
 
 class Router:
@@ -23,9 +23,9 @@ class Router:
   def match(self, method, path):
     return self._routes.get((method.upper(), path))
 
-def JSONResponse(data: dict, status: int = 200) -> Response:
+def JSONResponse(data: dict | list, status: int = 200) -> Response:
   headers = Headers.new({"content-type": "application/json"}.items())
-  return Response.new(json.dumps(data), headers=headers, status=status)
+  return Response.new(json_dumps(data), headers=headers, status=status)
 
 def get_endpoint(url: str) -> str:
   """Extract the endpoint from the request url string."""
@@ -34,10 +34,13 @@ def get_endpoint(url: str) -> str:
 def get_parameters(url: str) -> dict[str, str]:
   """Extract the query parameters from the request url string."""
   parameters: dict = {}
-  query: str = url.split('?')[1]
-  for param in query.split('&'):
-    key = param.split('=')[0]
-    value = param.split('=')[1]
-    parameters[key] = value
+  try:
+    query: str = url.split('?')[1]
+    for param in query.split('&'):
+      key = param.split('=')[0]
+      value = param.split('=')[1]
+      parameters[key] = value
+  except IndexError:
+    pass
 
   return parameters
