@@ -1,9 +1,9 @@
 name: Build
 on:
   workflow_dispatch:
-  schedule:
-    # Run 4 times a day, starting at midnight
-    - cron: "0 0,6,12,18 * * *"
+  # schedule:
+  #   # Run 4 times a day, starting at midnight
+  #   - cron: "0 0,6,12,18 * * *"
 concurrency:
   group: ci-${{ github.workflow }}
   cancel-in-progress: true
