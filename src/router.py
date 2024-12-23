@@ -29,7 +29,7 @@ def JSONResponse(data: dict | list, status: int = 200) -> Response:
 
 def get_endpoint(url: str) -> str:
   """Extract the endpoint from the request url string."""
-  return '/' + url.split('/', 3)[-1].split('?')[0]
+  return '/' + url.split('/', 3)[-1].split('?')[0].rstrip('/')
 
 def get_parameters(url: str) -> dict[str, str]:
   """Extract the query parameters from the request url string."""
