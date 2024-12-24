@@ -87,6 +87,5 @@ for format in FORMATS:
   # Create an index on the updated_at column.
   db(f"CREATE INDEX IF NOT EXISTS {format}_updated_at ON {format} (updated_at)")
   
-  # Delete old entries from the database.
-  # We'll assume all transactions have been completed within 5-10 minutes.
-  db(f"DELETE FROM {format} WHERE updated_at < datetime('now', '-30 minutes')")
+  # Delete old entries from the database (older than a month).
+  db(f"DELETE FROM {format} WHERE updated_at < datetime('now', '-1 month')")
