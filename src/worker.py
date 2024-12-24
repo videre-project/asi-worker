@@ -48,7 +48,7 @@ async def index(request, params, env):
   try:
     d1_result = await env.D1.prepare(f"""
       SELECT card, entry FROM {format}
-      WHERE card IN (SELECT value FROM json_each(?))
+      JOIN (SELECT value FROM json_each(?)) ON card = value;
     """).bind(json_dumps(cards)).all()
 
     if not d1_result.success:
