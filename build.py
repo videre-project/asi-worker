@@ -13,12 +13,6 @@ import sys; sys.path.append('src')
 from asi import fetch_archetypes, compute_archetype_bigrams
 from asi.postgres import start_pool
 
-# Ensure that the required environment variables are set.
-assert "DATABASE_URL" in env, "DATABASE_URL is not set."
-assert "CLOUDFLARE_API_KEY" in env, "CLOUDFLARE_API_KEY is not set."
-assert "CLOUDFLARE_DATABASE_ID" in env, "CLOUDFLARE_DATABASE_ID is not set."
-assert "CLOUDFLARE_ACCOUNT_ID" in env, "CLOUDFLARE_ACCOUNT_ID is not set."
-
 FORMATS = [
   'standard',
   'modern',
@@ -34,7 +28,10 @@ MIN_DATE = (TIMESTAMP := datetime.now()) - timedelta(days=90)
 start_pool()
 
 # Setup a connection to the Cloudflare D1 API.
-client = Cloudflare(api_key=env["CLOUDFLARE_API_KEY"])
+client = Cloudflare(
+  api_key=env["CLOUDFLARE_API_KEY"],
+  api_email=env["CLOUDFLARE_EMAIL"]
+)
 db = lambda query, **kwargs: client.d1.database.raw(
   database_id=env["CLOUDFLARE_DATABASE_ID"],
   account_id=env["CLOUDFLARE_ACCOUNT_ID"],

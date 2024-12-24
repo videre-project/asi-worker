@@ -1,9 +1,9 @@
 name: Build
 on:
   workflow_dispatch:
-  # schedule:
-  #   # Run 4 times a day, starting at midnight
-  #   - cron: "0 0,6,12,18 * * *"
+  schedule:
+    # Run 4 times a day, starting at midnight
+    - cron: "0 0,6,12,18 * * *"
 concurrency:
   group: ci-${{ github.workflow }}
   cancel-in-progress: true
@@ -24,6 +24,7 @@ jobs:
       - name: Create .env file
         run: |
           echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" >> .env
+          echo "CLOUDFLARE_EMAIL=${{ secrets.CLOUDFLARE_EMAIL }}" >> .env
           echo "CLOUDFLARE_API_KEY=${{ secrets.CLOUDFLARE_API_KEY }}" >> .env
           echo "CLOUDFLARE_DATABASE_ID=${{ secrets.CLOUDFLARE_DATABASE_ID }}" >> .env
           echo "CLOUDFLARE_ACCOUNT_ID=${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" >> .env
