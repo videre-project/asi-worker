@@ -46,6 +46,7 @@ for format in FORMATS:
     CREATE TABLE IF NOT EXISTS {format} (
       card TEXT PRIMARY KEY,
       entry JSONB,
+      hash TEXT DEFAULT MD5(entry),
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   """)
@@ -70,9 +71,15 @@ for format in FORMATS:
     batch_keys = keys[i:i + batch_size]
     batch: dict[str, dict] = { k: flattened_bigram[k] for k in batch_keys }
     res = db(f"""
+      -- Insert or replace bigram entries into the database.
       INSERT OR REPLACE INTO {format} (card, entry, updated_at)
       SELECT value ->> 0 as card, value ->> 1 as entry, CURRENT_TIMESTAMP
       FROM json_each(?)
+      -- Only insert new entries that do not already exist in the database.
+      WHERE NOT EXISTS (
+        SELECT 1 FROM {format}
+        WHERE card = value ->> 0 AND hash = MD5(value ->> 1)
+      )
       """,
       params=[json.dumps([[k, json.dumps(v)] for k, v in batch.items()])]
     )
