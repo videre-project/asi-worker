@@ -58,6 +58,9 @@ for format in FORMATS:
   flattened_bigram: dict = {}
   bigrams = compute_archetype_bigrams(fetch_archetypes(format, MIN_DATE))
   for (card1, card2), value in bigrams.items():
+    # Convert card names to lowercase for case-insensitive search.
+    card1, card2 = card1.lower(), card2.lower()
+    # Create nested dictionary entries for each card.
     if card1 not in flattened_bigram:
       flattened_bigram[card1] = {}
     flattened_bigram[card1][card2] = { k: round(v, 8) for k,v in value.items() }

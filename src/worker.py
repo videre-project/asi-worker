@@ -15,15 +15,15 @@ api = Router()
 @api.post('/asi')
 async def index(request, params, env):
   try:
-    cards: list[str] = (await request.json()).to_py()
-    assert isinstance(cards, list), "Received a non-array JSON object."
+    body: list[str] = (await request.json()).to_py()
+    assert isinstance(body, list), "Received a non-array JSON object."
   except:
     return JSONResponse({
       "error": "Invalid JSON",
       "message": "The request body must be a valid JSON array."
     }, status=400)
   else:
-    if len(cards) < 2:
+    if len(body) < 2:
       return JSONResponse({
         "error": "Invalid JSON",
         "message": "The request body must contain at least two cards."
@@ -43,27 +43,28 @@ async def index(request, params, env):
       "message": f"The 'format' parameter '{format}' is not supported."
     }, status=400)
 
+  cards = [c.lower() for c in body]
   bigrams: dict[tuple[str, str], any] = {}
   try:
-    d1_result = await env.D1.prepare("""
-      WITH card_list AS (SELECT value FROM json_each(?)),
-      filtered AS (
-      SELECT card, entry FROM modern
-      WHERE lower(card) IN (SELECT value FROM card_list)
-      )
-      SELECT json_array(card, key) as key, value as value
-      FROM filtered
-      CROSS JOIN json_each(filtered.entry)
-      WHERE lower(key) IN (SELECT value FROM card_list);
-    """).bind(json_dumps([card.lower() for card in cards])).all()
+    d1_result = await env.D1.prepare(f"""
+      SELECT card, entry FROM {format}
+      WHERE card IN (SELECT value FROM json_each(?))
+    """).bind(json_dumps(cards)).all()
 
     if not d1_result.success:
       raise Exception(d1_result.error)
+    elif d1_result.results.length == 0:
+      raise Exception("No matching cards found in the database.")
+    else:
+      d1_meta = d1_result.meta.to_py()
 
-    d1_meta = d1_result.meta.to_py()
-    for row in d1_result.results.to_py():
-      k, v = list(map(json_loads, row.values()))
-      bigrams[tuple(k)] = v
+    bigram_entries = d1_result.results.to_py()
+    for row in bigram_entries:
+      card1, jsonb = row.values()
+      for card2, entry in json_loads(jsonb).items():
+        if card2 in cards:
+          bigrams[(card1, card2)] = entry
+
   except Exception as e:
     return JSONResponse({
       "error": "Query error",
