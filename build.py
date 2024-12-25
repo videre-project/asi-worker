@@ -11,7 +11,7 @@ from os import environ as env
 import sys; sys.path.append('src')
 
 from asi import fetch_archetypes, compute_archetype_bigrams
-from asi.postgres import start_pool
+from asi.postgres import start_pool, hash
 
 FORMATS = [
   'standard',
@@ -45,9 +45,9 @@ for format in FORMATS:
   db(f"""
     CREATE TABLE IF NOT EXISTS {format} (
       card TEXT PRIMARY KEY,
-      entry JSONB,
-      hash TEXT DEFAULT MD5(entry),
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      entry TEXT,
+      hash TEXT,
+      updated_at DEFAULT CURRENT_TIMESTAMP
     );
   """)
 
@@ -65,26 +65,29 @@ for format in FORMATS:
 
   # Batch insert/update bigram entries in the database.
   # Allows for inserting 6,000 rows/minute (w/ 1200 requests every 5 minutes).
-  batch_size = 50
-  keys = list(flattened_bigram.keys())
+  batch_size = 25
+  keys = list(sorted(flattened_bigram.keys()))
   for i in range(0, len(keys), batch_size):
     batch_keys = keys[i:i + batch_size]
     batch: dict[str, dict] = { k: flattened_bigram[k] for k in batch_keys }
     res = db(f"""
-      -- Insert or replace bigram entries into the database.
-      INSERT OR REPLACE INTO {format} (card, entry, updated_at)
-      SELECT value ->> 0 as card, value ->> 1 as entry, CURRENT_TIMESTAMP
-      FROM json_each(?)
-      -- Only insert new entries that do not already exist in the database.
-      WHERE NOT EXISTS (
-        SELECT 1 FROM {format}
-        WHERE card = value ->> 0 AND hash = MD5(value ->> 1)
-      )
+        INSERT INTO {format} (card, entry, hash, updated_at)
+        VALUES
+          {','.join(['(?, ?, ?, CURRENT_TIMESTAMP)'] * len(batch_keys))}
+        ON CONFLICT(card) DO UPDATE SET
+          entry = excluded.entry,
+          hash = excluded.hash,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE excluded.hash != {format}.hash;
       """,
-      params=[json.dumps([[k, json.dumps(v)] for k, v in batch.items()])]
+      params=[item for sublist in [[k, e, hash(e)]
+                   for k,e in map(lambda kv: (kv[0], json.dumps(kv[1])),
+                                  batch.items())]
+                   for item in sublist]
     )
 
-  # Create an index on the updated_at column.
+  # Create an index on the hash and updated_at columns for faster lookups.
+  db(f"CREATE INDEX IF NOT EXISTS {format}_hash ON {format} (hash)")
   db(f"CREATE INDEX IF NOT EXISTS {format}_updated_at ON {format} (updated_at)")
   
   # Delete old entries from the database (older than a month).

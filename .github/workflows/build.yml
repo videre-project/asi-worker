@@ -2,8 +2,9 @@ name: Build
 on:
   workflow_dispatch:
   schedule:
-    # Run 4 times a day, starting at midnight
-    - cron: "0 0,6,12,18 * * *"
+    # Run 3 times a day, centered around internet peak hours:
+    # - 9:00 UTC (morning), 15:00 UTC (afternoon), 21:00 UTC (evening)
+    - cron: '0 9,15,21 * * *'
 concurrency:
   group: ci-${{ github.workflow }}
   cancel-in-progress: true

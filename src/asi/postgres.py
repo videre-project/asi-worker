@@ -5,6 +5,7 @@
 """PostgreSQL utilities for the ASI project."""
 
 from atexit import register as on_exit
+from hashlib import md5
 from os import environ as env
 
 from psycopg2 import pool
@@ -143,6 +144,17 @@ def parse_decklist(decklist_str: str) -> list[dict[str, int]]:
   # Finally, we return the decklist as 
   return [{ 'name': name,
             'quantity': quantity } for name, quantity in consolidated.items()]
+
+def hash(e: str) -> str:
+  """Hash a string using the MD5 algorithm.
+
+  Args:
+    e (str): The string to hash
+
+  Returns:
+    str: The hexadecimal representation of the MD5 hash of the input string.
+  """
+  return md5(e.encode('utf-8')).hexdigest()
 
 
 __all__ = [
