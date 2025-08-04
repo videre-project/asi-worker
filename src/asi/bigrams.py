@@ -10,7 +10,7 @@ from math import gamma
 from .archetypes import MACRO_ARCHETYPES, remove_colors, analyze_archetypes
 
 
-def comb(n: int, k: float) -> float:
+def comb(n: float, k: float) -> float:
   """Calculates the binomial coefficient C(n, k) = n! / (k! * (n - k)!).
 
   Args:
@@ -21,15 +21,32 @@ def comb(n: int, k: float) -> float:
     The binomial coefficient C(n, k).
   """
 
-  if k > n >= 1:
+  # Convert to int for integer operations, but handle edge cases first
+  if k < 0 or k > n or n < 0:
     return 0
   if k == 0 or k == n:
     return 1
-
+  
+  # Handle large values that would cause overflow
+  if n > 170 or k > 170:
+    return 0
+  
+  # Use symmetry property: C(n, k) = C(n, n-k)
+  k = min(k, n - k)
+  
+  # For small values, use direct calculation
+  if k == 1:
+    return n
+  if k == 2:
+    return n * (n - 1) / 2
+  
   # C(n, k) = n! / (k! * (n - k)!)
-  return gamma(n + 1) / (gamma(k + 1) * gamma(n - k + 1))
+  try:
+    return gamma(n + 1) / (gamma(k + 1) * gamma(n - k + 1))
+  except (OverflowError, ValueError):
+    return 0
 
-def hypergeo(K: float, N = 60, n = 1, n_draws = 7) -> float:
+def hypergeo(K: float, N: float = 60, n: int = 1, n_draws: int = 7) -> float:
   """Calculates the hypergeometric probability of drawing at least n successes.
 
   Args:
@@ -65,7 +82,7 @@ def compute_archetype_bigrams(archetypes: list[tuple]) -> dict[tuple, dict]:
     hypergeometric probabilities for the given card pair.
   """
 
-  bigrams: dict[tuple[str, str], dict[str, tuple[int, int, int, int]]] = {}
+  bigram_counts: dict[tuple[str, str], dict[str, tuple[int, int, int, int]]] = {}
 
   archetype_names = analyze_archetypes(archetypes)
   for entry in archetypes:
@@ -75,7 +92,7 @@ def compute_archetype_bigrams(archetypes: list[tuple]) -> dict[tuple, dict]:
                     if base_name in archetype_names and \
                         base_name not in MACRO_ARCHETYPES \
                     else entry[2]
-    if archetype not in archetype_names:
+    if archetype not in archetype_names or not isinstance(archetype, str):
       continue
 
     # Create a bigram for each pair of cards in the deck and sum the quantities.
@@ -84,23 +101,25 @@ def compute_archetype_bigrams(archetypes: list[tuple]) -> dict[tuple, dict]:
     count = sum(c["quantity"] for c in mainboard)
     for bigram in (tuple(sorted([c1, c2])) for c1 in cards 
                                           for c2 in cards if c1 != c2):
-      if bigram not in bigrams:
-        bigrams[bigram] = {}
-      if archetype not in bigrams[bigram]:
-        bigrams[bigram][archetype] = (0, 0, 0, 0)
+      if bigram not in bigram_counts:
+        bigram_counts[bigram] = {}
+      if archetype not in bigram_counts[bigram]:
+        bigram_counts[bigram][archetype] = (0, 0, 0, 0)
 
       # Sum the quantities for all copies of the card in the maindeck (since
       # there may be multiple entries for the same card under different IDs).
       qty1 = sum(c["quantity"] for c in mainboard if c["name"] == bigram[0])
       qty2 = sum(c["quantity"] for c in mainboard if c["name"] == bigram[1])
 
-      bigrams[bigram][archetype] = (bigrams[bigram][archetype][0] + qty1,
-                                    bigrams[bigram][archetype][1] + qty2,
-                                    bigrams[bigram][archetype][2] + count,
-                                    bigrams[bigram][archetype][3] + 1)
+      bigram_counts[bigram][archetype] = (bigram_counts[bigram][archetype][0] + qty1,
+                                    bigram_counts[bigram][archetype][1] + qty2,
+                                    bigram_counts[bigram][archetype][2] + count,
+                                    bigram_counts[bigram][archetype][3] + 1)
 
-  # Divide the bigram counts by the total number of occurrences.
-  for key, entry in bigrams.items():
+  # Convert counts to probabilities
+  bigrams: dict[tuple[str, str], dict[str, float]] = {}
+  for key, entry in bigram_counts.items():
+    bigrams[key] = {}
     for archetype, (qty1, qty2, total, count) in entry.items():
       #
       # Calculate joint probability of the bigram appearing in an opening hand,
