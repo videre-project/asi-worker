@@ -58,8 +58,27 @@ def hypergeo(K: float, N: float = 60, n: int = 1, n_draws: int = 7) -> float:
   Returns:
     The hypergeometric probability of drawing at least n successes.
   """
-
-  return sum((comb(K, i) * comb(N - K, n_draws - i)) / comb(N, n_draws)
+  
+  # Guard against invalid parameters
+  if K < 0 or N < 0 or n_draws < 0 or n < 0:
+    return 0 # Invalid parameters
+  
+  if n_draws > N:
+    return 0 # Cannot draw more than population size
+  
+  if K < n:
+    return 0 # Cannot get n successes if fewer than n exist
+  
+  if n > n_draws:
+    return 0 # Cannot get more successes than draws
+  
+  if n == 0:
+    return 1 # Probability of getting at least 0 successes is always 1
+  
+  # Avoid division by zero
+  if (denominator := comb(N, n_draws)) == 0: return 0
+  
+  return sum((comb(K, i) * comb(N - K, n_draws - i)) / denominator
              for i in range(n, n_draws + 1))
 
 def compute_archetype_bigrams(archetypes: list[tuple]) -> dict[tuple, dict]:
