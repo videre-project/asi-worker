@@ -156,6 +156,10 @@ def compute_archetype_bigrams(archetypes: list[tuple]) -> dict[tuple, dict]:
       # Normalize the joint probability by the maximum joint probability.
       k_max = max(4, (k1 + k2) / 2)
       P_MAX = 1 - (1 - hypergeo(k_max, N))**2
+      
+      # Skip this entry if P_MAX is effectively zero (indicating invalid data)
+      if P_MAX <= 1e-15: continue
+
       bigrams[key][archetype] = min(1, P_AB / P_MAX)
 
     # Re-sort the bigrams by their joint probabilities for each archetype entry.
