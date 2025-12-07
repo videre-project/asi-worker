@@ -8,6 +8,8 @@ on:
 concurrency:
   group: ci-${{ github.workflow }}
   cancel-in-progress: true
+env:
+  CI_PYTHON_VERSION: "3.13"
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -20,7 +22,11 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
       - name: Set up Python
-        run: uv python install
+        run: uv python install ${{ env.CI_PYTHON_VERSION }}
+      - name: Create virtual environment
+        run: |
+          uv venv --python ${{ env.CI_PYTHON_VERSION }} .venv
+          echo "$PWD/.venv/bin" >> $GITHUB_PATH
       # Run the build script
       - name: Create .env file
         run: |
@@ -30,7 +36,10 @@ jobs:
           echo "CLOUDFLARE_DATABASE_ID=${{ secrets.CLOUDFLARE_DATABASE_ID }}" >> .env
           echo "CLOUDFLARE_ACCOUNT_ID=${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" >> .env
       - name: Build
-        run: uv run build.py
+        run: |
+          set -e
+          source .venv/bin/activate
+          uv run build.py
   keepalive:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
