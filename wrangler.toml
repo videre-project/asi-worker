@@ -1,4 +1,4 @@
-name = "asi"
+name = "nbac"
 main = "src/worker.py"
 compatibility_flags = ["python_workers"]
 compatibility_date = "2024-03-20"
@@ -8,5 +8,5 @@ routes = [
 
 [[d1_databases]]
 binding = "D1"
-database_name = "asi-bigrams"
-database_id = "e123cc3c-2f0a-4ad1-b2a9-aa0c67d09fe8"
+database_name = "nbac-model"
+database_id = "ef89eb5f-e784-48d2-9486-b2b494281f86"

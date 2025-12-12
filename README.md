@@ -1,16 +1,16 @@
-# asi-worker
+# nbac-worker
 
-Cloudflare worker for computing archetype similarity index (ASI) scores.
+Cloudflare worker for archetype classification using NBAC (multinomial Naive Bayes).
 
-<a href="#overview">Overview</a> |
-<a href="#project-structure">Project Structure</a> |
-<a href="#asi-endpoint">`/asi` Endpoint</a> |
-<a href="#setup-and-deployment">Setup and Deployment</a> |
-<a href="#license">License</a>
+[Overview](#overview) |
+[Project Structure](#project-structure) |
+[`/nbac` Endpoint](#nbac-endpoint) |
+[Setup and Deployment](#setup-and-deployment) |
+[License](#license)
 
 ## Overview
 
-The [Archetype Similarity Index (ASI)](/SPECIFICATION.md) is designed to calculate the nearest archetypes to a given decklist based on the unique number of card-pairings (bigrams) they share. This project uses Cloudflare Workers to handle requests and compute the ASI.
+NBAC (Naive Bayes Archetype Classification) identifies the most likely archetypes for a given decklist based on observed card counts from a labeled corpus. This project uses Cloudflare Workers + D1 to serve low-latency inference.
 
 ## Project Structure
 
@@ -18,30 +18,44 @@ The [Archetype Similarity Index (ASI)](/SPECIFICATION.md) is designed to calcula
 ```sh
 .
 ├── src/
-│   ├── asi/ # ASI library for computing bigrams and ASI scores.
+│   ├── nbac/ # NBAC library (training + binary artifacts + scoring).
 │   │   ├── __init__.py
 │   │   ├── archetypes.py
-│   │   ├── bigrams.py
+│   │   ├── binary.py
+│   │   ├── model.py
+│   │   ├── score.py
+│   │   ├── train.py
 │   │   └── postgres.py
 │   ├── router.py # A zero-dependency request router.
 │   └── worker.py # The main Cloudflare worker script.
 ├── .env-example
-├── build.py # Build script for updating Cloudflare D1 bigrams.
+├── build.py # Build script for updating Cloudflare D1 NBAC artifacts.
 ├── pyproject.toml
 └── wrangler.toml # Configuration file for Cloudflare Workers.
 ```
 
-## `/asi` Endpoint
+## `/nbac` Endpoint
 
 ### Request
 
-To calculate the nearest archetypes to a given decklist, send a POST request to the `/asi` endpoint with a JSON body containing an array of card names.
+To classify the archetype of a decklist, send a POST request to the `/nbac` endpoint with a JSON body containing either:
+
+- a list of card names (presence-only input), or
+- a list of objects with `name` and `quantity`.
 
 #### URL
 
+```http
+POST https://ml.videreproject.com/nbac?format=modern # or another format
 ```
-POST https://ml.videreproject.com/asi?format=modern # or another format
-```
+
+#### Query Parameters
+
+- `format` (required): `standard|modern|pioneer|vintage|legacy|pauper`
+- `explain` (optional): enable explainability output (`0`/`1`, default `0`)
+- `explain_method` (optional): `lift|contrib` (default `lift`)
+- `explain_top` (optional): number of top archetypes to explain (default `1`, max `25`)
+- `explain_n` (optional): number of top cards per explained archetype (default `12`, max `25`)
 
 #### Headers
 
@@ -51,41 +65,31 @@ Content-Type: application/json
 
 #### Body
 
-The request body must be a valid JSON array containing a list of card names. The list must contain at least two cards to form bigrams.
+The request body must be a valid JSON array.
 
 For example:
 
 ```json
-// The card names must be provided as strings (but are not case-sensitive).
+// Presence-only input
 [
   "Agatha's Soul Cauldron",
   "Ancient Stirrings",
   "Basking Broodscale",
-  "Blade of the Bloodchief",
-  "Boseiju, Who Endures",
-  "Darksteel Citadel",
-  "Eldrazi Temple",
-  "Forest",
-  "Gemstone Caverns",
-  "Glaring Fleshraker",
-  "Grove of the Burnwillows",
-  "Haywire Mite",
-  "Kozilek's Command",
-  "Malevolent Rumble",
-  "Mishra's Bauble",
   "Mox Opal",
-  "Shadowspear",
-  "Springleaf Drum",
-  "Urza's Saga",
-  "Walking Ballista"
+  "Urza's Saga"
+]
+
+// Quantity input
+[
+  {"name": "Agatha's Soul Cauldron", "quantity": 1},
+  {"name": "Ancient Stirrings", "quantity": 4},
+  {"name": "Urza's Saga", "quantity": 4}
 ]
 ```
 
 ### Response
 
-The response will be a JSON object containing the nearest archetypes and their
-similarity scores. These scores vary between 0 and 1, with scores below 0.5
-being undecisive; only scores greater than 0.05 are included in the response.
+The response is a JSON object containing the top archetypes and their posterior probabilities.
 
 #### Success Response
 
@@ -97,26 +101,33 @@ being undecisive; only scores greater than 0.05 are included in the response.
     // The Cloudflare worker backend used to process the request.
     "backend": "v3-prod",
     // The total SQL execution time in milliseconds.
-    "exec-ms": 5.758,
+    "exec_ms": 5.758,
     // The number of rows read/scanned by the query.
     "read_count": 2742,
+    // Which NBAC model was used based on input payload shape.
+    "model": "counts"
   },
-  // The ASI scores for each archetype.
+  // Posterior probabilities for each archetype.
   "data": {
-    "Basking Broodscale Combo": 1,
-    "Eldrazi": 0.6481133,
-    "Hardened Scales": 0.32852826,
-    "Breach": 0.25529937,
-    "Affinity": 0.20222514,
-    "The Rock": 0.14852764,
-    "Grinding Station": 0.13885093,
-    "Through the Breach": 0.12699843,
-    "Eldrazi Ramp": 0.11773569,
-    "Lantern": 0.08489789,
-    "Gruul Aggro": 0.0651898,
-    "Eldrazi Tron": 0.06422159,
-    "Yawgmoth": 0.06139001,
-    "Tron": 0.0536501
+    "Basking Broodscale Combo": 0.84,
+    "Eldrazi": 0.09,
+    "Affinity": 0.03
+  },
+  // Optional per-card evidence (enabled with `explain=1`).
+  "explain": {
+    // Evidence method used: "lift" prefers background-relative lift when available,
+    // otherwise falls back to "contrib".
+    "method": "lift",
+    // Number of archetypes explained.
+    "top": 1,
+    // Number of cards per archetype.
+    "n": 12,
+    "archetypes": {
+      "Basking Broodscale Combo": [
+        {"card": "Urza's Saga", "quantity": 4, "score": 1.23456789},
+        {"card": "Mox Opal", "quantity": 1, "score": 0.98765432}
+      ]
+    }
   }
 }
 ```
@@ -197,7 +208,7 @@ uv install
 
 ### Build and Deploy
 
-1. **Build Bigrams**: Run the build script to update Cloudflare D1 with the latest bigrams for each format.
+1. **Build NBAC Artifacts**: Run the build script to update Cloudflare D1 with the latest NBAC artifacts for each format.
 
 ```bash
 uv run build.py

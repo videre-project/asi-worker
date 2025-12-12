@@ -1,7 +1,7 @@
 [project]
-name = "asi"
+name = "nbac"
 version = "0.1.0"
-description = "A simple Python package for computing ASI scores for decklists."
+description = "A simple Python package for Naive Bayes archetype classification (NBAC)."
 readme = "README.md"
 requires-python = ">=3.8"
 dependencies = [

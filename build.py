@@ -4,14 +4,13 @@
 ##
 from cloudflare import Cloudflare
 from datetime import datetime, timedelta
-import json
 from os import environ as env
 
 # Since we aren't bundling this script, we can dynamically import src/ modules.
 import sys; sys.path.append('src')
 
-from asi import fetch_archetypes, compute_archetype_bigrams
-from asi.postgres import start_pool, hash
+from nbac import fetch_archetypes, train_nbac, encode_meta, blob_to_db_value
+from nbac.postgres import start_pool, hash_bytes
 
 FORMATS = [
   'standard',
@@ -40,55 +39,77 @@ db = lambda query, **kwargs: client.d1.database.raw(
 )
 
 for format in FORMATS:
-  # Create the table if it does not exist.
-  # This doesn't consume any read/write operations if the table already exists.
+  cards_table = f"{format}_nbac_cards"
+  meta_table = f"{format}_nbac_meta"
+
+  # Create NBAC tables if they do not exist.
   db(f"""
-    CREATE TABLE IF NOT EXISTS {format} (
+    CREATE TABLE IF NOT EXISTS {cards_table} (
       card TEXT PRIMARY KEY,
-      entry TEXT,
+      entry BLOB,
       hash TEXT,
       updated_at DEFAULT CURRENT_TIMESTAMP
     );
   """)
 
-  # Flatten bigrams into a single dictionary entry per card for better database
-  # I/O efficiency. This reduces the n(n-1)/2 space complexity to just n.
-  flattened_bigram: dict = {}
-  bigrams = compute_archetype_bigrams(fetch_archetypes(format, MIN_DATE))
-  for (card1, card2), value in bigrams.items():
-    # Convert card names to lowercase for case-insensitive search.
-    card1, card2 = card1.lower(), card2.lower()
-    # Create nested dictionary entries for each card.
-    if card1 not in flattened_bigram:
-      flattened_bigram[card1] = {}
-    flattened_bigram[card1][card2] = { k: round(v, 8) for k,v in value.items() }
+  db(f"""
+    CREATE TABLE IF NOT EXISTS {meta_table} (
+      key TEXT PRIMARY KEY,
+      entry BLOB,
+      hash TEXT,
+      updated_at DEFAULT CURRENT_TIMESTAMP
+    );
+  """)
 
-  # Batch insert/update bigram entries in the database.
-  # Allows for inserting 6,000 rows/minute (w/ 1200 requests every 5 minutes).
+  corpus = fetch_archetypes(format, MIN_DATE)
+  artifacts = train_nbac(corpus)
+
+  meta_blob = encode_meta(artifacts.meta)
+  meta_hash = hash_bytes(meta_blob)
+
+  # The Cloudflare Python SDK sends params as JSON, so raw bytes aren't supported.
+  # Always base64-encode blobs for the build script; the Worker decodes them.
+  force_b64 = True
+  meta_value = blob_to_db_value(meta_blob, force_base64=True)
+
+  # Upsert meta row.
+  db(f"""
+    INSERT INTO {meta_table} (key, entry, hash, updated_at)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(key) DO UPDATE SET
+      entry = excluded.entry,
+      hash = excluded.hash,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE excluded.hash != {meta_table}.hash;
+  """, params=["meta", meta_value, meta_hash])
+
+  # Batch insert/update card entries.
   batch_size = 25
-  keys = list(sorted(flattened_bigram.keys()))
+  keys = list(sorted(artifacts.cards.keys()))
   for i in range(0, len(keys), batch_size):
     batch_keys = keys[i:i + batch_size]
-    batch: dict[str, dict] = { k: flattened_bigram[k] for k in batch_keys }
-    res = db(f"""
-        INSERT INTO {format} (card, entry, hash, updated_at)
-        VALUES
-          {','.join(['(?, ?, ?, CURRENT_TIMESTAMP)'] * len(batch_keys))}
-        ON CONFLICT(card) DO UPDATE SET
-          entry = excluded.entry,
-          hash = excluded.hash,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE excluded.hash != {format}.hash;
-      """,
-      params=[item for sublist in [[k, e, hash(e)]
-                   for k,e in map(lambda kv: (kv[0], json.dumps(kv[1])),
-                                  batch.items())]
-                   for item in sublist]
-    )
+    params = []
+    for card in batch_keys:
+      blob = artifacts.cards[card]
+      params.extend([card, blob_to_db_value(blob, force_base64=force_b64), hash_bytes(blob)])
 
-  # Create an index on the hash and updated_at columns for faster lookups.
-  db(f"CREATE INDEX IF NOT EXISTS {format}_hash ON {format} (hash)")
-  db(f"CREATE INDEX IF NOT EXISTS {format}_updated_at ON {format} (updated_at)")
-  
+    db(f"""
+      INSERT INTO {cards_table} (card, entry, hash, updated_at)
+      VALUES
+        {','.join(['(?, ?, ?, CURRENT_TIMESTAMP)'] * len(batch_keys))}
+      ON CONFLICT(card) DO UPDATE SET
+        entry = excluded.entry,
+        hash = excluded.hash,
+        updated_at = CURRENT_TIMESTAMP
+      WHERE excluded.hash != {cards_table}.hash;
+    """, params=params)
+
+  # Indexes for faster checks and maintenance.
+  db(f"CREATE INDEX IF NOT EXISTS {cards_table}_hash ON {cards_table} (hash)")
+  db(f"CREATE INDEX IF NOT EXISTS {cards_table}_updated_at ON {cards_table} (updated_at)")
+  db(f"CREATE INDEX IF NOT EXISTS {meta_table}_hash ON {meta_table} (hash)")
+  db(f"CREATE INDEX IF NOT EXISTS {meta_table}_updated_at ON {meta_table} (updated_at)")
+
   # Delete old entries from the database (older than a month).
-  db(f"DELETE FROM {format} WHERE updated_at < datetime('now', '-1 month')")
+  db(f"DELETE FROM {cards_table} WHERE updated_at < datetime('now', '-1 month')")
+  db(f"DELETE FROM {meta_table} WHERE updated_at < datetime('now', '-1 month')")
